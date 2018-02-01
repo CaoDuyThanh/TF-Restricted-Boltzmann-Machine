@@ -1,2 +1,2 @@
-# TF-SimpleCNN
-A simple CNN network using TensorFlow
+# TF-Restricted Boltzmann Machine
+A RBM network using TensorFlow
