@@ -33,7 +33,7 @@ class TSBoardHandler():
                    _value,
                    _step):
         with tf.name_scope(_name_scope):
-            _summary_value = tf.Summary.Value(tag          = _name,
+            _summary_value = tf.Summary.Value(tag          = _name_scope + '/' + _name,
                                               simple_value = _value)
             _summary = tf.Summary(value = [_summary_value])
             self.summary_folder.add_summary(_summary, _step)
@@ -43,12 +43,16 @@ class TSBoardHandler():
                    _name_scope,
                    _name,
                    _images,
-                   _step):
+                   _step,
+                   _is_gray = True):
         with tf.name_scope(_name_scope):
             _im_summaries = []
             for _idx, _img in enumerate(_images):
                 _str = StringIO()
-                plt.imsave(_str, _img, format = 'jpg')
+                if _is_gray:
+                    plt.imsave(_str, _img, format = 'jpg', cmap = plt.cm.gray)
+                else:
+                    plt.imsave(_str, _img, format = 'jpg')
 
                 # Create an Image object
                 _img_sum = tf.Summary.Image(encoded_image_string = _str.getvalue(),
@@ -56,7 +60,7 @@ class TSBoardHandler():
                                             width                = _img.shape[1])
 
                 # Create a Summary value
-                _im_summaries.append(tf.Summary.Value(tag   = '%s/%d' % (_name, _idx),
+                _im_summaries.append(tf.Summary.Value(tag   = _name_scope + '/' + '%s/%d' % (_name, _idx),
                                                       image = _img_sum))
 
             # Create and write Summary
@@ -97,7 +101,7 @@ class TSBoardHandler():
                 _hist.bucket.append(_c)
 
             # Create and write Summary
-            _summary_hist = tf.Summary.Value(tag   = _name,
+            _summary_hist = tf.Summary.Value(tag   = _name_scope + '/' + _name,
                                              histo = _hist)
             _summary = tf.Summary(value = [_summary_hist])
             self.summary_folder.add_summary(_summary, _step)
