@@ -3,7 +3,7 @@ import timeit
 from random import shuffle
 
 # Import Models
-from Models.CNNModel import *
+from Models.RBMModel import *
 from Models.VisualBackPropModel import *
 
 # Import Utils
@@ -20,12 +20,12 @@ from Utils.TSBoardHandler import *       # Tensorboard handler
 TRAIN_STATE         = True     # Training state
 VALID_STATE         = False    # Validation state
 BATCH_SIZE          = 16
-NUM_EPOCH           = 20
+NUM_EPOCH           = 50
 LEARNING_RATE       = 0.003        # Starting learning rate
-DISPLAY_FREQUENCY   = 500;         INFO_DISPLAY = '\r%sLearning rate = %f - Epoch = %d - Iter = %d - Cost = %f'
+DISPLAY_FREQUENCY   = 500;         INFO_DISPLAY = '\r%sLearning rate = %f - Epoch = %d - Iter = %d - Cost = %f - Recon cost = %f'
 SAVE_FREQUENCY      = 2500
 VALIDATE_FREQUENCY  = 2500
-VISUALIZE_FREQUENCY = 5000
+VISUALIZE_FREQUENCY = 2500
 
 START_EPOCH     = 0
 START_ITERATION = 0
@@ -41,14 +41,13 @@ DATASET_PATH    = '/media/badapple/Data/Projects/Machine Learning/Dataset/MNIST/
 # STATE PATH
 SETTING_PATH      = '../Pretrained/'
 TSBOARD_PATH      = SETTING_PATH + 'Tensorboard/'
-RECORD_PATH       = SETTING_PATH + 'SimpleCNN_Record.ckpt'
-STATE_PATH        = SETTING_PATH + 'SimpleCNN_CurrentState.ckpt'
-BEST_PREC_PATH    = SETTING_PATH + 'SimpleCNN_Prec_Best.ckpt'
+RECORD_PATH       = SETTING_PATH + 'RBM_Record.ckpt'
+STATE_PATH        = SETTING_PATH + 'RBM_CurrentState.ckpt'
+BEST_PREC_PATH    = SETTING_PATH + 'RBM_Prec_Best.ckpt'
 
 #  GLOBAL VARIABLES
 dataset      = None
-CNN_model    = None
-Visual_model = None
+RBM_model    = None
 TB_hanlder   = None
 
 ########################################################################################################################
@@ -67,17 +66,9 @@ def _load_dataset(_all_path):
 #    CREATE FEATURE EXTRACTION MODEL                                                                                   #
 #                                                                                                                      #
 ########################################################################################################################
-def _create_CNN_model():
-    global CNN_model, \
-           Visual_model
-    CNN_model = CNNModel()
-    Visual_model = VisualBackPropModel(_feature_layers = [CNN_model.layers['st1_relu'],
-                                                          CNN_model.layers['st2_relu'],
-                                                          CNN_model.layers['st3_relu'],
-                                                          CNN_model.layers['st4_relu'],
-                                                          CNN_model.layers['st5_relu']],
-                                       _kernel_sizes   = [[3, 3], [5, 5], [3, 3], [5, 5], [3, 3]],
-                                       _strides        = [[1, 1], [2, 2], [1, 1], [2, 2], [1, 1]])
+def _create_RBM_model():
+    global RBM_model
+    RBM_model = RBMModel()
 
 ########################################################################################################################
 #                                                                                                                      #
@@ -85,7 +76,7 @@ def _create_CNN_model():
 #                                                                                                                      #
 ########################################################################################################################
 def _create_TSBoard_model(_all_path):
-    global CNN_model, \
+    global RBM_model, \
            TB_hanlder
     TB_hanlder = TSBoardHandler(_save_path = _all_path['tsboard_path'])
 
@@ -147,6 +138,19 @@ def _scale_log(_data,
     _data = numpy.log(_data)
     return _scale_linear(_data, _min, _max)
 
+def _flat_to_imgs(_data):
+    _num_imgs   = len(_data)
+    _row        = int(numpy.sqrt(_num_imgs))
+    _img_size   = _data.shape[1]
+    _count      = 0
+    merged_imgs = numpy.zeros((_row * _img_size, _row * _img_size))
+    for _i in range(_row):
+        for _j in range(_row):
+            merged_imgs[_i * _img_size : (_i + 1) * _img_size,
+                        _j * _img_size : (_j + 1) * _img_size] = _data[_count, :]
+            _count += 1
+    return merged_imgs
+
 ########################################################################################################################
 #                                                                                                                      #
 #    VALID FEATURE EXTRACTION MODEL..........                                                                          #
@@ -161,8 +165,8 @@ def _valid_model(_session,
     _valid_set_y = _shuffle_data([_valid_set_x, _valid_set_y])
 
     # --- Info params ---
-    _precs = []
-    _iter  = 0
+    _loss = []
+    _iter = 0
     _num_batch_valided_data = len(_valid_set_x) // BATCH_SIZE
     for _id_batch_valided_data in range(_num_batch_valided_data):
         _valid_start_time = timeit.default_timer()
@@ -172,20 +176,20 @@ def _valid_model(_session,
         _valid_batch_y = _valid_set_y[ _id_batch_valided_data      * BATCH_SIZE:
                                       (_id_batch_valided_data + 1) * BATCH_SIZE, ]
         _iter += 1
-        _result = _model.valid_func(_session  = _session,
-                                    _state    = VALID_STATE,
-                                    _batch_x  = _valid_batch_x,
-                                    _batch_y  = _valid_batch_y)
-        _precs.append(_result[0])
+        _result = _model.valid_func(_session    = _session,
+                                    _state      = VALID_STATE,
+                                    _batch_size = BATCH_SIZE,
+                                    _batch_x    = _valid_batch_x)
+        _loss.append(_result[0])
         _valid_end_time = timeit.default_timer()
         # Print information
         print '\r|-- Valid %d / %d batch - Time = %f' % (_id_batch_valided_data, _num_batch_valided_data, _valid_end_time - _valid_start_time),
 
         if _iter % DISPLAY_FREQUENCY == 0:
             # Print information of current training in progress
-            print ('Precision = %f' % (numpy.mean(_precs)))
+            print ('Loss = %f' % (numpy.mean(_loss)))
 
-    return numpy.mean(_precs)
+    return numpy.mean(_loss)
 
 ########################################################################################################################
 #                                                                                                                      #
@@ -194,7 +198,7 @@ def _valid_model(_session,
 ########################################################################################################################
 def _train_test_model(_all_path):
     global dataset, \
-           CNN_model, \
+           RBM_model, \
            TB_hanlder
     # ===== Prepare path =====
     _setting_path     = _all_path['setting_path']
@@ -235,22 +239,24 @@ def _train_test_model(_all_path):
 
     # ===== Load data record =====
     print ('|-- Load previous record !')
-    iter_train_record = []
-    cost_train_record = []
-    iter_valid_record = []
-    prec_valid_record = []
-    best_prec_valid   = 0
+    iter_train_record       = []
+    cost_train_record       = []
+    recon_cost_train_record = []
+    iter_valid_record       = []
+    prec_valid_record       = []
+    best_loss_valid         = tf.float32.max
     _epoch  = START_EPOCH
     _iter   = START_ITERATION
     if check_file_exist(_record_path, _throw_error = False):
         _file = open(_record_path, 'rb')
-        iter_train_record = pickle.load(_file)
-        cost_train_record = pickle.load(_file)
-        iter_valid_record = pickle.load(_file)
-        prec_valid_record = pickle.load(_file)
-        best_prec_valid   = pickle.load(_file)
-        _epoch            = pickle.load(_file)
-        _iter             = pickle.load(_file)
+        iter_train_record       = pickle.load(_file)
+        cost_train_record       = pickle.load(_file)
+        recon_cost_train_record = pickle.load(_file)
+        iter_valid_record       = pickle.load(_file)
+        prec_valid_record       = pickle.load(_file)
+        best_loss_valid         = pickle.load(_file)
+        _epoch                  = pickle.load(_file)
+        _iter                   = pickle.load(_file)
         _file.close()
     print ('|-- Load previous record ! Completed !')
 
@@ -264,9 +270,10 @@ def _train_test_model(_all_path):
 
     # ===== Training start =====
     # ----- Temporary record -----
-    _cost_train_temp = []
-    _ratios          = []
-    _learning_rate   = LEARNING_RATE
+    _cost_train_temp       = []
+    _recon_cost_train_temp = []
+    _ratios                = []
+    _learning_rate         = LEARNING_RATE
 
     # ----- Train -----
     while (_epoch < NUM_EPOCH):
@@ -285,16 +292,16 @@ def _train_test_model(_all_path):
             _train_batch_y = _train_set_y[_id_batch      * BATCH_SIZE :
                                          (_id_batch + 1) * BATCH_SIZE, ]
 
-            _train_result = CNN_model.train_func(_session       = _session,
+            _train_result = RBM_model.train_func(_session       = _session,
                                                  _state         = TRAIN_STATE,
                                                  _learning_rate = _learning_rate,
                                                  _batch_size    = BATCH_SIZE,
-                                                 _batch_x       = _train_batch_x,
-                                                 _batch_y       = _train_batch_y)
+                                                 _batch_x       = _train_batch_x)
 
             # Temporary save info
             _cost_train_temp.append(_train_result[0])
-            _ratios.append(_train_result[1])
+            _recon_cost_train_temp.append(_train_result[1])
+            _ratios.append(_train_result[2])
             _train_end_time = timeit.default_timer()
 
             # Print information
@@ -302,9 +309,10 @@ def _train_test_model(_all_path):
 
             if _iter % DISPLAY_FREQUENCY == 0:
                 # Print information of current training in progress
-                print (INFO_DISPLAY % ('|-- ', _learning_rate, _epoch, _iter, numpy.mean(_cost_train_temp)))
+                print (INFO_DISPLAY % ('|-- ', _learning_rate, _epoch, _iter, numpy.mean(_cost_train_temp), numpy.mean(_recon_cost_train_temp)))
                 iter_train_record.append(_iter)
                 cost_train_record.append(numpy.mean(_cost_train_temp))
+                recon_cost_train_record.append(numpy.mean(_recon_cost_train_temp))
                 print ('|-- Ratio = %f' % (numpy.mean(_ratios)))
 
                 # Add summary
@@ -315,6 +323,10 @@ def _train_test_model(_all_path):
                 TB_hanlder.log_scalar(_name_scope = 'Train',
                                       _name       = 'Loss',
                                       _value      = numpy.mean(_cost_train_temp),
+                                      _step       = _iter)
+                TB_hanlder.log_scalar(_name_scope = 'Train',
+                                      _name       = 'Recon Loss',
+                                      _value      = numpy.mean(_recon_cost_train_temp),
                                       _step       = _iter)
                 TB_hanlder.log_scalar(_name_scope = 'Train',
                                       _name       = 'Ratio',
@@ -330,9 +342,10 @@ def _train_test_model(_all_path):
                 _file = open(_record_path, 'wb')
                 pickle.dump(iter_train_record, _file, 2)
                 pickle.dump(cost_train_record, _file, 2)
+                pickle.dump(recon_cost_train_record, _file, 2)
                 pickle.dump(iter_valid_record, _file, 2)
                 pickle.dump(prec_valid_record, _file, 2)
-                pickle.dump(best_prec_valid, _file, 2)
+                pickle.dump(best_loss_valid, _file, 2)
                 pickle.dump(_epoch, _file, 2)
                 pickle.dump(_iter, _file, 2)
                 _file.close()
@@ -346,42 +359,56 @@ def _train_test_model(_all_path):
             if _iter % VALIDATE_FREQUENCY == 0:
                 print ('\n------------------- Validate Model -------------------')
                 _prec_valid = _valid_model(_session    = _session,
-                                           _model      = CNN_model,
+                                           _model      = RBM_model,
                                            _valid_data = [_valid_set_x, _valid_set_y])
                 iter_valid_record.append(_iter)
                 prec_valid_record.append(_prec_valid)
-                print ('\n+ Validate model finished! Prec = %f' % (_prec_valid))
+                print ('\n+ Validate model finished! Loss = %f' % (_prec_valid))
                 print ('\n------------------- Validate Model (Done) -------------------')
 
                 # Add summary
                 TB_hanlder.log_scalar(_name_scope = 'Valid',
-                                      _name       = 'Accuracy',
+                                      _name       = 'Loss',
                                       _value      = _prec_valid,
                                       _step       = _iter)
 
                 # Save model if its cost better than old one
-                if (_prec_valid > best_prec_valid):
-                    best_prec_valid = _prec_valid
+                if (_prec_valid < best_loss_valid):
+                    best_loss_valid = _prec_valid
 
                     # Save best model
                     _saver.save(sess      = _session,
                                 save_path = _best_prec_path)
-                    print ('+ Save best prec model ! Complete !')
+                    print ('+ Save best loss model ! Complete !')
 
             if _iter % VISUALIZE_FREQUENCY == 0:
                 print ('\n------------------- Visualize Model -------------------')
-                _feature_maps = Visual_model.visual_func(_session = _session,
-                                                         _state   = TRAIN_STATE,
-                                                         _batch_x = _visual_set_x)[0]
-                _feature_maps = _scale_linear(_feature_maps, 0, 255)
-                _origin_set_x = _visual_set_x.reshape((len(_visual_set_x), 28, 28, 1))
+                _recon_imgs = RBM_model.recon_func(_session    = _session,
+                                                   _state      = TRAIN_STATE,
+                                                   _batch_size = len(_visual_set_x),
+                                                   _batch_x    = _visual_set_x)[0]
+                _recon_imgs   = _recon_imgs.reshape((len(_recon_imgs), 28, 28))
+                _recon_imgs   = _scale_linear(_recon_imgs, 0, 255)
+                _recon_imgs   = _flat_to_imgs(_recon_imgs)
+                _origin_set_x = _visual_set_x.reshape((len(_visual_set_x), 28, 28))
                 _origin_set_x = _scale_linear(_origin_set_x, 0, 255)
-                _feature_maps = numpy.concatenate((_feature_maps, _origin_set_x), axis = 1)
-                _feature_maps = numpy.squeeze(_feature_maps)
+                _origin_set_x = _flat_to_imgs(_origin_set_x)
+                _merged_imgs  = numpy.concatenate((_recon_imgs, _origin_set_x), axis = 1)
                 # Add summary
                 TB_hanlder.log_images(_name_scope = 'Train',
-                                      _name       = 'Images',
-                                      _images     = _feature_maps,
+                                      _name       = 'Merged images',
+                                      _images     = [_merged_imgs],
+                                      _step       = _iter)
+
+                _filters = RBM_model.filter_func(_session = _session)[0]
+                _filters = numpy.transpose(_filters, (1, 0))
+                _filters = _filters.reshape((len(_filters), 28, 28))
+                _filters = _scale_linear(_filters, 0, 255)
+                _filters = _flat_to_imgs(_filters)
+                # Add summary
+                TB_hanlder.log_images(_name_scope = 'Train',
+                                      _name       = 'Filters',
+                                      _images     = [_filters],
                                       _step       = _iter)
                 print ('\n------------------- Visualize Model (Done) ------------')
 
@@ -396,7 +423,7 @@ def _train_test_model(_all_path):
     # ===== Testing =====
     print ('\n------------------- Test Model -------------------')
     _prec_test = _valid_model(_session    = _session,
-                              _model      = CNN_model,
+                              _model      = RBM_model,
                               _valid_data = [_test_set_x, _test_set_y])
     print ('\n+ Test model finished! Prec = %f' % (_prec_test))
     print ('\n------------------- Test Model (Done) -------------------')
@@ -414,6 +441,6 @@ if __name__ == '__main__':
     _all_path['best_prec_path']   = BEST_PREC_PATH
 
     _load_dataset(_all_path = _all_path)
-    _create_CNN_model()
+    _create_RBM_model()
     _create_TSBoard_model(_all_path = _all_path)
     _train_test_model(_all_path = _all_path)
